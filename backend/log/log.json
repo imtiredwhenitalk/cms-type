@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-05-24T02:26:00Z",
+  "level": "error",
+  "service": "php-backend", 
+  "message": "Ошибка подключения к базе данных",
+  "file": "db.php",
+  "line": 42
+}
