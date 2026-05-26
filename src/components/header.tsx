@@ -38,6 +38,15 @@ export function Header({ currentLocale, nav, brand }: HeaderProps) {
               {item.label}
             </Link>
           ))}
+          <Link
+            href={`/${currentLocale}/news`}
+            className="px-3 py-2 text-sm text-slate-300 transition hover:text-white rounded-md hover:bg-slate-800/50 ml-2 flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2v-5a2 2 0 012-2h2.972a2 2 0 012 2v5a2 2 0 01-2 2z" />
+            </svg>
+            News
+          </Link>
         </nav>
 
         {/* Locale switcher */}
