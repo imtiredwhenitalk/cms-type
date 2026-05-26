@@ -136,7 +136,7 @@ export default async function NewsPage({ params }: PageProps) {
         </section>
       </main>
 
-      <Footer />
+      <Footer brand={copy.brand} note={copy.footerNote} />
     </>
   );
 }

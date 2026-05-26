@@ -243,7 +243,7 @@ export default async function NewsDetailPage({ params }: PageProps) {
         )}
       </main>
 
-      <Footer />
+      <Footer brand={copy.brand} note={copy.footerNote} />
     </>
   );
 }

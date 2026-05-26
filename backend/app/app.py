@@ -7,7 +7,6 @@ import traceback
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, JSON
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import relationship
 
 # Импортируем логгер
 from log.logger import app_logger
