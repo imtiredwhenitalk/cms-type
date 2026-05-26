@@ -4,7 +4,7 @@ import { localeLabels, supportedLocales, type Locale } from "@/lib/locale";
 
 export function LocaleSwitcher({ currentLocale }: { currentLocale: Locale }) {
   return (
-    <div className="inline-flex rounded-full border border-white/12 bg-white/8 p-1 shadow-[0_12px_50px_rgba(2,6,23,0.32)] backdrop-blur-xl">
+    <div className="inline-flex rounded-lg border border-slate-700/50 bg-slate-800/30 p-1 backdrop-blur-sm">
       {supportedLocales.map((locale) => {
         const active = locale === currentLocale;
 
@@ -13,16 +13,13 @@ export function LocaleSwitcher({ currentLocale }: { currentLocale: Locale }) {
             key={locale}
             href={`/${locale}`}
             aria-current={active ? "page" : undefined}
-            className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] transition ${
+            className={`px-3 py-1.5 text-xs font-medium rounded transition-all ${
               active
-                ? "bg-white text-slate-950 shadow-lg shadow-cyan-400/20"
-                : "text-slate-300 hover:text-white"
+                ? "bg-blue-500 text-white shadow-lg shadow-blue-500/25"
+                : "text-slate-400 hover:text-slate-200"
             }`}
           >
-            <span className="flex items-center gap-2">
-              <span>{locale.toUpperCase()}</span>
-              <span className="hidden sm:inline">{localeLabels[locale]}</span>
-            </span>
+            {locale.toUpperCase()}
           </Link>
         );
       })}
