@@ -172,7 +172,10 @@ export function NewsList({ locale, initialNews = [] }: NewsListProps) {
       {/* Load More Button */}
       {!loading && !error && news.length > 9 && (
         <div className="text-center pt-8">
-          <button className="inline-flex items-center gap-2 px-6 py-3 rounded-lg border border-slate-800/50 bg-gradient-to-br from-slate-900/50 to-slate-950/50 text-white hover:border-blue-500/50 hover:bg-slate-900/60 transition-all">
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-lg border border-slate-800/50 bg-gradient-to-br from-slate-900/50 to-slate-950/50 text-white hover:border-blue-500/50 hover:bg-slate-900/60 transition-all"
+          >
             <span>Load more articles</span>
             <svg
               className="w-4 h-4"

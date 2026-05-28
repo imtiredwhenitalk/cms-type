@@ -1,19 +1,22 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import logging 
 import os 
 import sqlalchemy 
 import datetime 
 import traceback 
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, JSON
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, JSON, ForeignKey
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 
 # Импортируем логгер
 from log.logger import app_logger
-from security.registration import RegistrationManager
+from security.registration import RegistrationManager, User
+from security.security import generate_token, verify_token
 from data.test_news import get_test_news
 
 app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]}})
 
 # Конфигурация БД
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///cms.db")
@@ -26,6 +29,8 @@ class News(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    author_name = Column(String(120), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -86,7 +91,14 @@ def login():
         success, result = reg_manager.login_user(username, password)
         
         if success:
-            return jsonify(result), 200
+            token = generate_token(result['user_id'])
+            return jsonify({
+                'message': 'Login successful',
+                'token': token,
+                'user_id': result['user_id'],
+                'username': result['username'],
+                'is_admin': result.get('is_admin', False)
+            }), 200
         else:
             return jsonify({"error": result}), 401
     
@@ -140,8 +152,20 @@ def change_password():
 
 @app.route("/api/news", methods=["POST"])
 def create_news():
-    """Создание новой новости"""
+    """Создание новой новости (только для авторизованных пользователей)"""
     try:
+        # Проверяем токен
+        token = None
+        if "Authorization" in request.headers:
+            token = request.headers["Authorization"].split(" ")[1]
+        
+        if not token:
+            return jsonify({"error": "Требуется авторизация"}), 401
+        
+        user_id = verify_token(token)
+        if not user_id:
+            return jsonify({"error": "Неверный или истекший токен"}), 401
+        
         session = Session()
         data = request.get_json()
         
@@ -157,16 +181,28 @@ def create_news():
         if len(content) > 10000:
             return jsonify({"error": "Content не должен быть больше 10000 символов"}), 400
         
-        new_news = News(title=title, content=content)
+        # Получаем информацию о пользователе
+        user = session.query(User).filter_by(id=user_id).first()
+        if not user:
+            session.close()
+            return jsonify({"error": "Пользователь не найден"}), 404
+        
+        new_news = News(
+            title=title, 
+            content=content,
+            user_id=user_id,
+            author_name=user.full_name or user.username
+        )
         session.add(new_news)
         session.commit()
         
-        app_logger.info("Новость создана", news_id=new_news.id, title=title)
+        app_logger.info("Новость создана", news_id=new_news.id, title=title, user_id=user_id)
         
         response = {
             "message": "Новость создана успешно",
             "news_id": new_news.id,
             "title": new_news.title,
+            "author_name": new_news.author_name,
             "created_at": new_news.created_at.isoformat()
         }
         
@@ -191,6 +227,8 @@ def get_news():
                 "id": item.id,
                 "title": item.title,
                 "content": item.content,
+                "user_id": item.user_id,
+                "author_name": item.author_name,
                 "created_at": item.created_at.isoformat(),
                 "updated_at": item.updated_at.isoformat()
             })
@@ -221,6 +259,8 @@ def get_news_by_id(news_id):
             "id": news_item.id,
             "title": news_item.title,
             "content": news_item.content,
+            "user_id": news_item.user_id,
+            "author_name": news_item.author_name,
             "created_at": news_item.created_at.isoformat(),
             "updated_at": news_item.updated_at.isoformat()
         }
@@ -235,8 +275,20 @@ def get_news_by_id(news_id):
 
 @app.route("/api/news/<int:news_id>", methods=["PUT"])
 def update_news(news_id):
-    """Обновить новость"""
+    """Обновить новость (только автор или админ)"""
     try:
+        # Проверяем токен
+        token = None
+        if "Authorization" in request.headers:
+            token = request.headers["Authorization"].split(" ")[1]
+        
+        if not token:
+            return jsonify({"error": "Требуется авторизация"}), 401
+        
+        user_id = verify_token(token)
+        if not user_id:
+            return jsonify({"error": "Неверный или истекший токен"}), 401
+        
         session = Session()
         data = request.get_json()
         
@@ -246,6 +298,17 @@ def update_news(news_id):
             app_logger.warning("Новость не найдена для обновления", news_id=news_id)
             session.close()
             return jsonify({"error": "Новость не найдена"}), 404
+        
+        # Проверяем права доступа
+        user = session.query(User).filter_by(id=user_id).first()
+        if not user:
+            session.close()
+            return jsonify({"error": "Пользователь не найден"}), 404
+        
+        # Только автор или админ может редактировать
+        if news_item.user_id != user_id and not user.is_admin:
+            session.close()
+            return jsonify({"error": "У вас нет прав для редактирования этой новости"}), 403
         
         if "title" in data:
             if len(data["title"]) > 255:
@@ -260,7 +323,7 @@ def update_news(news_id):
         news_item.updated_at = datetime.datetime.utcnow()
         session.commit()
         
-        app_logger.info("Новость обновлена", news_id=news_id, title=news_item.title)
+        app_logger.info("Новость обновлена", news_id=news_id, title=news_item.title, user_id=user_id)
         
         response = {
             "message": "Новость обновлена успешно",
@@ -279,8 +342,20 @@ def update_news(news_id):
 
 @app.route("/api/news/<int:news_id>", methods=["DELETE"])
 def delete_news(news_id):
-    """Удалить новость"""
+    """Удалить новость (только автор или админ)"""
     try:
+        # Проверяем токен
+        token = None
+        if "Authorization" in request.headers:
+            token = request.headers["Authorization"].split(" ")[1]
+        
+        if not token:
+            return jsonify({"error": "Требуется авторизация"}), 401
+        
+        user_id = verify_token(token)
+        if not user_id:
+            return jsonify({"error": "Неверный или истекший токен"}), 401
+        
         session = Session()
         news_item = session.query(News).filter_by(id=news_id).first()
         
@@ -289,10 +364,21 @@ def delete_news(news_id):
             session.close()
             return jsonify({"error": "Новость не найдена"}), 404
         
+        # Проверяем права доступа
+        user = session.query(User).filter_by(id=user_id).first()
+        if not user:
+            session.close()
+            return jsonify({"error": "Пользователь не найден"}), 404
+        
+        # Только автор или админ может удалять
+        if news_item.user_id != user_id and not user.is_admin:
+            session.close()
+            return jsonify({"error": "У вас нет прав для удаления этой новости"}), 403
+        
         session.delete(news_item)
         session.commit()
         
-        app_logger.info("Новость удалена", news_id=news_id, title=news_item.title)
+        app_logger.info("Новость удалена", news_id=news_id, title=news_item.title, user_id=user_id)
         
         session.close()
         return jsonify({"message": "Новость удалена успешно"}), 200
@@ -300,6 +386,151 @@ def delete_news(news_id):
     except Exception as e:
         app_logger.error("Ошибка при удалении новости", error=str(e), news_id=news_id)
         return jsonify({"error": "Ошибка при удалении новости"}), 500
+
+
+# ==================== ADMIN ENDPOINTS ====================
+
+@app.route("/api/admin/users", methods=["GET"])
+def get_all_users():
+    """Получить список всех пользователей (только для админов)"""
+    try:
+        # Проверяем токен
+        token = None
+        if "Authorization" in request.headers:
+            token = request.headers["Authorization"].split(" ")[1]
+        
+        if not token:
+            return jsonify({"error": "Требуется авторизация"}), 401
+        
+        user_id = verify_token(token)
+        if not user_id:
+            return jsonify({"error": "Неверный или истекший токен"}), 401
+        
+        session = Session()
+        user = session.query(User).filter_by(id=user_id).first()
+        
+        if not user or not user.is_admin:
+            session.close()
+            return jsonify({"error": "Доступ запрещен. Требуются права админа"}), 403
+        
+        users = session.query(User).all()
+        
+        users_list = []
+        for u in users:
+            users_list.append({
+                "id": u.id,
+                "username": u.username,
+                "email": u.email,
+                "full_name": u.full_name,
+                "is_active": u.is_active,
+                "is_admin": u.is_admin,
+                "created_at": u.created_at.isoformat()
+            })
+        
+        app_logger.info("Получен список пользователей", count=len(users_list), admin_id=user_id)
+        session.close()
+        
+        return jsonify({"users": users_list, "count": len(users_list)}), 200
+    
+    except Exception as e:
+        app_logger.error("Ошибка при получении списка пользователей", error=str(e))
+        return jsonify({"error": "Ошибка при получении списка пользователей"}), 500
+
+
+@app.route("/api/admin/users/<int:target_user_id>", methods=["PUT"])
+def update_user(target_user_id):
+    """Обновить пользователя (только для админов)"""
+    try:
+        # Проверяем токен
+        token = None
+        if "Authorization" in request.headers:
+            token = request.headers["Authorization"].split(" ")[1]
+        
+        if not token:
+            return jsonify({"error": "Требуется авторизация"}), 401
+        
+        user_id = verify_token(token)
+        if not user_id:
+            return jsonify({"error": "Неверный или истекший токен"}), 401
+        
+        session = Session()
+        admin = session.query(User).filter_by(id=user_id).first()
+        
+        if not admin or not admin.is_admin:
+            session.close()
+            return jsonify({"error": "Доступ запрещен. Требуются права админа"}), 403
+        
+        target_user = session.query(User).filter_by(id=target_user_id).first()
+        if not target_user:
+            session.close()
+            return jsonify({"error": "Пользователь не найден"}), 404
+        
+        data = request.get_json()
+        
+        if "is_active" in data:
+            target_user.is_active = data["is_active"]
+        if "is_admin" in data:
+            target_user.is_admin = data["is_admin"]
+        
+        session.commit()
+        
+        app_logger.info("Пользователь обновлен админом", target_user_id=target_user_id, admin_id=user_id)
+        
+        response = {
+            "message": "Пользователь обновлен успешно",
+            "id": target_user.id,
+            "username": target_user.username,
+            "is_active": target_user.is_active,
+            "is_admin": target_user.is_admin
+        }
+        
+        session.close()
+        return jsonify(response), 200
+    
+    except Exception as e:
+        app_logger.error("Ошибка при обновлении пользователя", error=str(e), user_id=target_user_id)
+        return jsonify({"error": "Ошибка при обновлении пользователя"}), 500
+
+
+@app.route("/api/admin/users/<int:target_user_id>", methods=["DELETE"])
+def delete_user(target_user_id):
+    """Удалить пользователя (только для админов)"""
+    try:
+        # Проверяем токен
+        token = None
+        if "Authorization" in request.headers:
+            token = request.headers["Authorization"].split(" ")[1]
+        
+        if not token:
+            return jsonify({"error": "Требуется авторизация"}), 401
+        
+        user_id = verify_token(token)
+        if not user_id:
+            return jsonify({"error": "Неверный или истекший токен"}), 401
+        
+        session = Session()
+        admin = session.query(User).filter_by(id=user_id).first()
+        
+        if not admin or not admin.is_admin:
+            session.close()
+            return jsonify({"error": "Доступ запрещен. Требуются права админа"}), 403
+        
+        target_user = session.query(User).filter_by(id=target_user_id).first()
+        if not target_user:
+            session.close()
+            return jsonify({"error": "Пользователь не найден"}), 404
+        
+        session.delete(target_user)
+        session.commit()
+        
+        app_logger.info("Пользователь удален админом", target_user_id=target_user_id, admin_id=user_id)
+        
+        session.close()
+        return jsonify({"message": "Пользователь удален успешно"}), 200
+    
+    except Exception as e:
+        app_logger.error("Ошибка при удалении пользователя", error=str(e), user_id=target_user_id)
+        return jsonify({"error": "Ошибка при удалении пользователя"}), 500
 
 
 # ==================== ENDPOINTS ТЕСТОВЫХ ДАННЫХ ====================
@@ -348,8 +579,9 @@ def seed_test_data():
 def health_check():
     """Проверка здоровья приложения"""
     try:
+        from sqlalchemy import text
         session = Session()
-        session.execute("SELECT 1")
+        session.execute(text("SELECT 1"))
         session.close()
         
         return jsonify({
